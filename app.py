@@ -7,6 +7,9 @@ from sklearn.metrics import *
 
 # Models
 from sklearn.linear_model import LinearRegression
+from sklearn.preprocessing import PolynomialFeatures
+from sklearn.pipeline import Pipeline
+
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.svm import SVC
 from sklearn.tree import DecisionTreeClassifier, plot_tree
@@ -16,7 +19,6 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 
 st.set_page_config(page_title="AutoML Trainer", layout="wide")
-
 st.title("🚀 AutoML Interactive Trainer")
 
 # ---------------- SESSION STATE ----------------
@@ -43,7 +45,7 @@ if file is not None:
             st.error("Dataset is empty!")
             st.stop()
 
-        # ---------------- HANDLE MISSING VALUES ----------------
+        # Missing values
         if df.isnull().sum().sum() > 0:
             st.warning("Missing values detected! Filling automatically...")
             for col in df.columns:
@@ -52,7 +54,6 @@ if file is not None:
                 else:
                     df[col].fillna(df[col].mean(), inplace=True)
 
-        # ---------------- COLUMN SELECTION ----------------
         columns = df.columns.tolist()
 
         target = st.selectbox("Select Target Variable (Y)", columns)
@@ -69,10 +70,9 @@ if file is not None:
 
             # Encoding
             X = pd.get_dummies(X)
-
             st.session_state.columns = X.columns
 
-            # ---------------- SPLIT ----------------
+            # Split
             test_size = st.slider("Test Size", 0.1, 0.5, 0.2)
             random_state = st.number_input("Random State", 0, 100, 42)
 
@@ -87,7 +87,28 @@ if file is not None:
 
             # ================= REGRESSION =================
             if task == "Regression":
-                model = LinearRegression()
+
+                reg_type = st.selectbox("Select Regression Type",
+                                        ["Simple Linear", "Multiple Linear", "Polynomial"])
+
+                # Simple Linear
+                if reg_type == "Simple Linear":
+                    if len(features) != 1:
+                        st.warning("Simple Linear requires exactly ONE feature.")
+                    model = LinearRegression()
+
+                # Multiple Linear
+                elif reg_type == "Multiple Linear":
+                    model = LinearRegression()
+
+                # Polynomial
+                elif reg_type == "Polynomial":
+                    degree = st.slider("Polynomial Degree", 2, 5, 2)
+
+                    model = Pipeline([
+                        ("poly", PolynomialFeatures(degree=degree)),
+                        ("linreg", LinearRegression())
+                    ])
 
             # ================= CLASSIFICATION =================
             else:
@@ -143,7 +164,6 @@ if file is not None:
                         st.write("Recall:", recall_score(y_test, y_pred, average='weighted'))
                         st.write("F1 Score:", f1_score(y_test, y_pred, average='weighted'))
 
-                        # 🔥 CONFUSION MATRIX
                         cm = confusion_matrix(y_test, y_pred)
 
                         fig, ax = plt.subplots()
@@ -156,7 +176,6 @@ if file is not None:
                         st.text("Classification Report:")
                         st.text(classification_report(y_test, y_pred))
 
-                        # Decision Tree Plot
                         if model_name == "Decision Tree":
                             fig, ax = plt.subplots(figsize=(10, 5))
                             plot_tree(model, filled=True, feature_names=X.columns)
