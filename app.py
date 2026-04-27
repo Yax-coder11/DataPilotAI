@@ -3,14 +3,9 @@ import pandas as pd
 import numpy as np
 
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import PolynomialFeatures, StandardScaler, LabelEncoder
-from sklearn.metrics import (
-    accuracy_score, confusion_matrix,
-    r2_score, mean_squared_error,
-    classification_report,
-    precision_score, recall_score, f1_score
-)
+from sklearn.metrics import *
 
+# Models
 from sklearn.linear_model import LinearRegression
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.svm import SVC
@@ -20,210 +15,183 @@ from sklearn.ensemble import RandomForestClassifier
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-st.set_page_config(layout="wide")
+st.set_page_config(page_title="AutoML Trainer", layout="wide")
+
 st.title("🚀 AutoML Interactive Trainer")
 
-file = st.file_uploader("Upload CSV", type=["csv"])
+# ---------------- SESSION STATE ----------------
+if "model" not in st.session_state:
+    st.session_state.model = None
 
-if file:
-    df = pd.read_csv(file)
-    st.write(df.head())
+if "trained" not in st.session_state:
+    st.session_state.trained = False
 
-    cols = df.columns.tolist()
+if "columns" not in st.session_state:
+    st.session_state.columns = None
 
-    X_cols = st.multiselect("Select X", cols)
-    y_col = st.selectbox("Select Y", cols)
+# ---------------- FILE UPLOAD ----------------
+file = st.file_uploader("Upload CSV Dataset", type=["csv"])
 
-    if X_cols and y_col:
+if file is not None:
+    try:
+        df = pd.read_csv(file)
 
-        X = df[X_cols].copy()
-        y = df[y_col].copy()
+        st.subheader("📊 Dataset Preview")
+        st.dataframe(df.head())
 
-        # Encoding
-        X = pd.get_dummies(X, drop_first=True)
+        if df.empty:
+            st.error("Dataset is empty!")
+            st.stop()
 
-        if y.dtype == "object":
-            le = LabelEncoder()
-            y = le.fit_transform(y)
-            st.session_state["le"] = le
-
-        # Sidebar settings
-        st.sidebar.header("Settings")
-        test_size = st.sidebar.slider("Test Size", 0.1, 0.5, 0.2)
-        random_state = st.sidebar.number_input("Random State", value=42)
-
-        X_train, X_test, y_train, y_test = train_test_split(
-            X, y, test_size=test_size, random_state=random_state
-        )
-
-        task = st.radio("Task", ["Regression", "Classification"])
-
-        # ================= REGRESSION =================
-        if task == "Regression":
-            model_type = st.selectbox("Model", ["Linear", "Multiple", "Polynomial"])
-
-            if model_type == "Polynomial":
-                degree = st.slider("Degree", 2, 5, 2)
-
-            if st.button("Train Model"):
-
-                if model_type in ["Linear", "Multiple"]:
-                    model = LinearRegression()
-                    model.fit(X_train, y_train)
-                    y_pred = model.predict(X_test)
-
+        # ---------------- HANDLE MISSING VALUES ----------------
+        if df.isnull().sum().sum() > 0:
+            st.warning("Missing values detected! Filling automatically...")
+            for col in df.columns:
+                if df[col].dtype == 'object':
+                    df[col].fillna(df[col].mode()[0], inplace=True)
                 else:
-                    poly = PolynomialFeatures(degree=degree)
-                    X_train_p = poly.fit_transform(X_train)
-                    X_test_p = poly.transform(X_test)
+                    df[col].fillna(df[col].mean(), inplace=True)
 
-                    model = LinearRegression()
-                    model.fit(X_train_p, y_train)
-                    y_pred = model.predict(X_test_p)
+        # ---------------- COLUMN SELECTION ----------------
+        columns = df.columns.tolist()
 
-                    st.session_state["poly"] = poly
+        target = st.selectbox("Select Target Variable (Y)", columns)
+        features = st.multiselect("Select Features (X)", columns)
 
-                # Save
-                st.session_state["model"] = model
-                st.session_state["X_cols"] = X.columns
-                st.session_state["y_test"] = y_test
-                st.session_state["y_pred"] = y_pred
-                st.session_state["trained"] = True
+        if target and features:
 
-                r2 = r2_score(y_test, y_pred)
-                mse = mean_squared_error(y_test, y_pred)
+            if target in features:
+                st.error("Target column cannot be in features!")
+                st.stop()
 
-                st.metric("R²", f"{r2:.4f}")
-                st.metric("MSE", f"{mse:.4f}")
+            X = df[features]
+            y = df[target]
 
-        # ================= CLASSIFICATION =================
-        else:
-            model_type = st.selectbox(
-                "Model",
-                ["KNN", "SVM", "Decision Tree", "Random Forest"]
+            # Encoding
+            X = pd.get_dummies(X)
+
+            st.session_state.columns = X.columns
+
+            # ---------------- SPLIT ----------------
+            test_size = st.slider("Test Size", 0.1, 0.5, 0.2)
+            random_state = st.number_input("Random State", 0, 100, 42)
+
+            X_train, X_test, y_train, y_test = train_test_split(
+                X, y, test_size=test_size, random_state=random_state
             )
 
-            if model_type == "KNN":
-                k = st.slider("K", 1, 15, 5)
+            # ---------------- TASK ----------------
+            task = st.selectbox("Select Task", ["Classification", "Regression"])
 
-            elif model_type == "SVM":
-                kernel = st.selectbox("Kernel", ["linear", "rbf", "poly"])
+            model = None
 
-            elif model_type == "Decision Tree":
-                depth = st.slider("Max Depth", 1, 20, 5)
+            # ================= REGRESSION =================
+            if task == "Regression":
+                model = LinearRegression()
 
-            elif model_type == "Random Forest":
-                trees = st.slider("Trees", 10, 200, 100)
+            # ================= CLASSIFICATION =================
+            else:
+                model_name = st.selectbox("Select Model",
+                                         ["KNN", "SVM", "Decision Tree", "Random Forest"])
 
-            if st.button("Train Model"):
-
-                scaler = StandardScaler()
-                X_train_s = scaler.fit_transform(X_train)
-                X_test_s = scaler.transform(X_test)
-
-                if model_type == "KNN":
+                if model_name == "KNN":
+                    k = st.slider("K Value", 1, 15, 5)
                     model = KNeighborsClassifier(n_neighbors=k)
-                    model.fit(X_train_s, y_train)
 
-                elif model_type == "SVM":
+                elif model_name == "SVM":
+                    kernel = st.selectbox("Kernel", ["linear", "rbf", "poly"])
                     model = SVC(kernel=kernel)
-                    model.fit(X_train_s, y_train)
 
-                elif model_type == "Decision Tree":
+                elif model_name == "Decision Tree":
+                    depth = st.slider("Max Depth", 1, 10, 3)
                     model = DecisionTreeClassifier(max_depth=depth)
-                    model.fit(X_train, y_train)
 
-                else:
-                    model = RandomForestClassifier(n_estimators=trees)
-                    model.fit(X_train, y_train)
+                elif model_name == "Random Forest":
+                    n = st.slider("Trees", 10, 200, 100)
+                    model = RandomForestClassifier(n_estimators=n)
 
-                # Predict
-                if model_type in ["KNN", "SVM"]:
-                    y_pred = model.predict(X_test_s)
-                else:
+            # ---------------- TRAIN ----------------
+            if st.button("Train Model"):
+                try:
+                    model.fit(X_train, y_train)
                     y_pred = model.predict(X_test)
 
-                acc = accuracy_score(y_test, y_pred)
+                    st.session_state.model = model
+                    st.session_state.trained = True
 
-                # Save
-                st.session_state["model"] = model
-                st.session_state["scaler"] = scaler
-                st.session_state["X_cols"] = X.columns
-                st.session_state["model_type"] = model_type
-                st.session_state["y_test"] = y_test
-                st.session_state["y_pred"] = y_pred
-                st.session_state["trained"] = True
+                    st.success("Model Trained Successfully!")
 
-                st.metric("Accuracy", f"{acc:.4f}")
+                    # -------- REGRESSION --------
+                    if task == "Regression":
+                        st.subheader("📈 Regression Metrics")
+                        st.write("R2 Score:", r2_score(y_test, y_pred))
+                        st.write("MSE:", mean_squared_error(y_test, y_pred))
 
-                if acc == 1:
-                    st.warning("⚠️ Overfitting")
+                        fig, ax = plt.subplots()
+                        ax.scatter(y_test, y_pred)
+                        ax.set_title("Actual vs Predicted")
+                        ax.set_xlabel("Actual")
+                        ax.set_ylabel("Predicted")
+                        st.pyplot(fig)
 
-                # Extra metrics
-                precision = precision_score(y_test, y_pred, average='weighted')
-                recall = recall_score(y_test, y_pred, average='weighted')
-                f1 = f1_score(y_test, y_pred, average='weighted')
+                    # -------- CLASSIFICATION --------
+                    else:
+                        st.subheader("📊 Classification Metrics")
 
-                cm = confusion_matrix(y_test, y_pred)
+                        st.write("Accuracy:", accuracy_score(y_test, y_pred))
+                        st.write("Precision:", precision_score(y_test, y_pred, average='weighted'))
+                        st.write("Recall:", recall_score(y_test, y_pred, average='weighted'))
+                        st.write("F1 Score:", f1_score(y_test, y_pred, average='weighted'))
 
-                tn = cm[0][0]
-                fp = cm[0][1]
-                specificity = tn / (tn + fp) if (tn + fp) != 0 else 0
+                        # 🔥 CONFUSION MATRIX
+                        cm = confusion_matrix(y_test, y_pred)
 
-                error = 1 - acc
+                        fig, ax = plt.subplots()
+                        sns.heatmap(cm, annot=True, fmt='d', ax=ax)
+                        ax.set_title("Confusion Matrix")
+                        ax.set_xlabel("Predicted")
+                        ax.set_ylabel("Actual")
+                        st.pyplot(fig)
 
-                st.write(f"Precision: {precision:.4f}")
-                st.write(f"Recall: {recall:.4f}")
-                st.write(f"F1 Score: {f1:.4f}")
-                st.write(f"Specificity: {specificity:.4f}")
-                st.write(f"Error: {error:.4f}")
+                        st.text("Classification Report:")
+                        st.text(classification_report(y_test, y_pred))
 
-                # Confusion Matrix
-                fig, ax = plt.subplots(figsize=(4,3))
-                sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', ax=ax)
-                st.pyplot(fig)
+                        # Decision Tree Plot
+                        if model_name == "Decision Tree":
+                            fig, ax = plt.subplots(figsize=(10, 5))
+                            plot_tree(model, filled=True, feature_names=X.columns)
+                            ax.set_title("Decision Tree Visualization")
+                            st.pyplot(fig)
 
-                # Decision Tree Plot
-                if model_type == "Decision Tree":
-                    fig, ax = plt.subplots(figsize=(6,4))
-                    plot_tree(model, filled=True, feature_names=X.columns)
-                    st.pyplot(fig)
+                except Exception as e:
+                    st.error(f"Training Error: {e}")
 
-        # ================= SHOW RESULTS =================
-        if st.session_state.get("trained"):
+            # ---------------- PREDICTION ----------------
+            if st.session_state.trained:
 
-            st.subheader("📊 Scatter Plot (Actual vs Predicted)")
+                st.subheader("🔮 Make Prediction")
 
-            fig, ax = plt.subplots(figsize=(4,3))
-            ax.scatter(st.session_state["y_test"], st.session_state["y_pred"])
-            st.pyplot(fig)
+                with st.form("prediction_form"):
+                    input_data = []
 
-        # ================= PREDICTION =================
-        if "model" in st.session_state:
+                    for col in st.session_state.columns:
+                        val = st.text_input(f"Enter {col}")
+                        input_data.append(val)
 
-            st.subheader("🔮 Predict")
-
-            with st.form("form"):
-                data = {}
-                for col in X_cols:
-                    data[col] = st.text_input(col)
-
-                submit = st.form_submit_button("Predict")
+                    submit = st.form_submit_button("Predict")
 
                 if submit:
-                    inp = pd.DataFrame([data])
-                    inp = pd.get_dummies(inp)
-                    inp = inp.reindex(columns=st.session_state["X_cols"], fill_value=0)
+                    try:
+                        input_array = np.array(input_data).reshape(1, -1).astype(float)
+                        prediction = st.session_state.model.predict(input_array)
 
-                    if "poly" in st.session_state:
-                        inp = st.session_state["poly"].transform(inp)
+                        st.success(f"Prediction: {prediction[0]}")
 
-                    if st.session_state.get("model_type") in ["KNN", "SVM"]:
-                        inp = st.session_state["scaler"].transform(inp)
+                    except:
+                        st.error("Invalid input! Enter numeric values properly.")
 
-                    pred = st.session_state["model"].predict(inp)
+    except Exception as e:
+        st.error(f"File Error: {e}")
 
-                    if "le" in st.session_state:
-                        pred = st.session_state["le"].inverse_transform(pred)
-
-                    st.success(f"Prediction: {pred[0]}")
+else:
+    st.info("Upload a CSV file to start.")
